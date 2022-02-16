@@ -14,7 +14,7 @@ dataset <- BreastCancer %>%
   dplyr::select(-Id) %>%
   mutate(across(-Class,as.numeric)) %>%
   mutate(across(c(Bare.nuclei, Epith.c.size),miss_vals)) #%>% #add missing vals
-  #na.omit() #want to run the code without this line so that rows are only omitted
+#na.omit() #want to run the code without this line so that rows are only omitted
 # if the model uses the column that has a missing value in that row
 
 #specify logistic regression model
@@ -33,34 +33,34 @@ folds <- vfold_cv(training(trn_tst_split), v=10, strata = Class)
 
 # function to generate all possible combinations of formulas with n variables added to a base formula
 add_n_var_formulas <- function(y_var, x_vars, data, n = 2, include_base = T, include_full = T){
-
+  
   potential_x_vars <-
     names(data) %>% #variable names
     {.[!. %in% c(y_var, x_vars)]} #remove y and existing x vars
-
+  
   combos <-
     potential_x_vars %>%
     DescTools::CombSet(n, repl=FALSE, ord=FALSE) %>%
     as_tibble() %>%
     unite(col = combination, sep = " + ") %>%
     pull(combination, name = combination)
-
+  
   if (include_base) {combos[length(combos)+1]<-"1"}
   if (include_full) {combos[length(combos)+1]<-"."}
-
+  
   base_pred <- paste(x_vars, collapse = " + ")
-
+  
   new_formulas <-
     combos %>%
     {paste(y_var, " ~ ",paste(base_pred,., sep = " + "))} %>%  #make formula strings
     purrr::map(as.formula) %>% #make formula
     purrr::map(workflowsets:::rm_formula_env)
-
+  
   names(new_formulas) <- combos
-
+  
   if(include_base){ names(new_formulas)[names(new_formulas) == "1"] <- "Base Model" }
   if(include_full){names(new_formulas)[names(new_formulas) == "."] <- "All Predictors"}
-
+  
   new_formulas
 }
 
@@ -95,7 +95,7 @@ grid_ctrl <-
     save_workflow = TRUE
   )
 
-#Set up for parallel processing
+# Set up for parallel processing
 all_cores <- parallel::detectCores(logical = TRUE)
 cl <- makePSOCKcluster(all_cores)
 registerDoParallel(cl)
@@ -110,6 +110,7 @@ cancer_workflows <-
                resamples = folds,
                verbose = TRUE)
 
+# End parallel compute cluster
 stopImplicitCluster()
 
 # Plot results
@@ -123,9 +124,18 @@ cancer_workflows %>%
     upper = quantile(.estimate,probs = 0.8),
     .groups = "drop"
   ) %>%
-  mutate(wflow_id = factor(wflow_id),
-         wflow_id = reorder(wflow_id, ROC)) %>%
-  ggplot(aes(x = ROC, y = wflow_id)) +
+  mutate(
+    model = if_else(grepl("All Predictors",wflow_id),"All Predictors",model),
+    model = if_else(grepl("Base Model",wflow_id),"Base Model",model),
+    wflow_id = factor(wflow_id),
+    wflow_id = reorder(wflow_id, ROC)) %>%
+  # {bind_rows(         # This part filters for the top 50 models by ROC
+  #   slice_max(.,order_by = roc, n=50),
+  #   filter(.,(model == "Base Model")|(model == "All Predictors")))} %>%
+  ggplot(aes(x = ROC, y = wflow_id, color = model)) +
   geom_point() +
   geom_errorbar(aes(xmin = lower, xmax = upper), width = .25) +
-  labs(title = "Comparing models of the form `Class ~ Normal.nucleoli + ...`",y = "Additional variable")
+  labs(title = "Comparing models of the form `Class ~ Normal.nucleoli + ...`",
+       color = "Model type",
+       x = "Area under ROC curve",
+       y = "Additional variable")
